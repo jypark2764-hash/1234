@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D 점프 러너 게임</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Press+Start+2P&display=swap');
+        
+        body { 
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* 밝은 배경 */
+        }
+        
+        /* 캔버스 및 컨테이너 스타일 */
+        .game-container {
+            background-color: #ffffff;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            overflow: hidden; /* 캔버스 외곽선을 깔끔하게 */
+        }
+
+        #gameCanvas {
+            display: block;
+            background-color: #e5e7eb; /* 하늘색 배경 */
+            cursor: pointer;
+            border-bottom: 5px solid #10b981; /* 지면 경계 */
+        }
+
+        /* 픽셀 아트 스타일의 텍스트를 위한 폰트 */
+        .pixel-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        /* 버튼 스타일 */
+        .game-button {
+            padding: 0.75rem 2rem;
+            background-color: #f59e0b; /* 주황색 버튼 */
+            color: white;
+            font-weight: bold;
+            border-radius: 8px;
+            transition: all 0.2s;
+            box-shadow: 0 4px #d97706; /* 3D 효과 */
+        }
+        .game-button:hover {
+            background-color: #fbbf24;
+            box-shadow: 0 2px #d97706;
+            transform: translateY(2px);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="game-container w-full max-w-lg p-0">
+        <h1 class="text-3xl font-extrabold text-center py-4 bg-gray-800 text-yellow-300 pixel-font">JUMP RUNNER</h1>
+        
+        <!-- 게임 캔버스 -->
+        <canvas id="gameCanvas" width="512" height="256"></canvas>
+
+        <!-- 정보 및 컨트롤 -->
+        <div class="p-4 bg-gray-100 text-gray-800 flex justify-between items-center">
+            <div class="text-left pixel-font text-sm">
+                <p>점수: <span id="scoreDisplay" class="text-red-500">0</span></p>
+                <p>최고 점수: <span id="highScoreDisplay" class="text-green-500">0</span></p>
+            </div>
+            <button id="startButton" class="game-button">시작 (SPACE)</button>
+        </div>
+    </div>
+    
+    <!-- 게임 오버 모달 -->
+    <div id="gameOverModal" class="fixed inset-0 bg-black bg-opacity-75 hidden items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-xs w-full text-center border-4 border-red-500">
+            <h4 class="text-4xl font-bold text-red-600 mb-4 pixel-font">게임 오버!</h4>
+            <p class="text-xl text-gray-700 mb-2">획득한 점수:</p>
+            <p id="finalScore" class="text-4xl font-mono text-blue-600 mb-6 font-extrabold"></p>
+            <button onclick="window.location.reload();" class="game-button w-full">다시 도전!</button>
+        </div>
+    </div>
+
+
+    <script>
+        // 전역 변수 설정
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const highScoreDisplay = document.getElementById('highScoreDisplay');
+        const gameOverModal = document.getElementById('gameOverModal');
+        const finalScoreDisplay = document.getElementById('finalScore');
+        
+        // 게임 상수
+        const GRAVITY = 0.6;
+        const JUMP_VELOCITY = -12;
+        const GROUND_Y = canvas.height - 10;
+        const INITIAL_SPEED = 5;
+        const SPEED_INCREASE_RATE = 0.001; // 시간이 지날수록 속도 증가
+        const OBSTACLE_SPAWN_RATE = 100; // 100 프레임마다 장애물 생성 시도
+
+        // 게임 상태
+        let isGameRunning = false;
+        let gameSpeed = INITIAL_SPEED;
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('highScore') || 0);
+        let frameCount = 0;
+        let obstacles = [];
+
+        // 캐릭터 객체
+        const player = {
+            x: 50,
+            y: GROUND_Y,
+            width: 20,
+            height: 40,
+            velocityY: 0,
+            isJumping: false,
+        };
+
+        // 장애물 객체 생성 함수
+        function createObstacle() {
+            const obstacleHeight = 30;
+            const obstacleWidth = 15;
+            
+            return {
+                x: canvas.width,
+                y: GROUND_Y - obstacleHeight,
+                width: obstacleWidth,
+                height: obstacleHeight,
+                isScored: false,
+            };
+        }
+
+        // 키 이벤트 핸들러
+        function handleJump(e) {
+            // 스페이스바 (32), W (87) 또는 화살표 위 (ArrowUp)
+            if ((e.keyCode === 32 || e.keyCode === 87 || e.key === 'ArrowUp') && isGameRunning) {
+                if (!player.isJumping) {
+                    player.velocityY = JUMP_VELOCITY;
+                    player.isJumping = true;
+                }
+            }
+        }
+
+        // 게임 시작/정지
+        startButton.addEventListener('click', startGame);
+        document.addEventListener('keydown', (e) => {
+            handleJump(e);
+            // 스페이스바 입력 시 버튼 클릭과 동일하게 동작
+            if (e.keyCode === 32 && !isGameRunning) {
+                startGame();
+            }
+        });
+
+        // 초기 화면 설정
+        function initialize() {
+            highScoreDisplay.textContent = highScore;
+            drawWelcomeScreen();
+        }
+
+        function drawWelcomeScreen() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#10b981'; /* 지면 */
+            ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+
+            ctx.fillStyle = '#4b5563';
+            ctx.font = '24px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText('점프 게임', canvas.width / 2, canvas.height / 2 - 40);
+            
+            ctx.font = '16px Inter';
+            ctx.fillText('시작하려면 SPACE 또는 버튼을 누르세요', canvas.width / 2, canvas.height / 2);
+            
+            drawPlayer(player);
+        }
+
+        function startGame() {
+            if (isGameRunning) return;
+            
+            isGameRunning = true;
+            score = 0;
+            gameSpeed = INITIAL_SPEED;
+            player.y = GROUND_Y;
+            player.velocityY = 0;
+            player.isJumping = false;
+            obstacles = [];
+            frameCount = 0;
+            gameOverModal.classList.add('hidden');
+            
+            // 버튼 텍스트 변경
+            startButton.textContent = '재시작';
+            
+            gameLoop();
+        }
+
+        // === 그리기 함수 ===
+
+        function drawPlayer(p) {
+            // 캐릭터 (주황색 상자)
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(p.x, p.y - p.height, p.width, p.height);
+
+            // 눈 (간단한 디테일)
+            ctx.fillStyle = 'black';
+            ctx.fillRect(p.x + p.width - 5, p.y - p.height + 5, 3, 3);
+        }
+
+        function drawObstacle(o) {
+            // 장애물 (선인장 - 녹색)
+            ctx.fillStyle = '#10b981';
+            // 메인 몸통
+            ctx.fillRect(o.x, o.y, o.width, o.height);
+            // 팔 1
+            ctx.fillRect(o.x - 5, o.y + o.height * 0.3, 10, 5);
+            // 팔 2
+            ctx.fillRect(o.x + o.width, o.y + o.height * 0.6, 10, 5);
+        }
+
+        function drawGround() {
+            ctx.fillStyle = '#10b981'; 
+            ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+        }
+
+        // === 업데이트 함수 ===
+
+        function updatePlayer() {
+            // 중력 적용
+            player.velocityY += GRAVITY;
+            player.y += player.velocityY;
+
+            // 지면 충돌 처리
+            if (player.y >= GROUND_Y) {
+                player.y = GROUND_Y;
+                player.velocityY = 0;
+                player.isJumping = false;
+            }
+        }
+
+        function updateObstacles() {
+            // 장애물 이동 및 제거
+            obstacles.forEach((o, index) => {
+                o.x -= gameSpeed;
+
+                // 화면을 벗어나면 배열에서 제거
+                if (o.x + o.width < 0) {
+                    obstacles.splice(index, 1);
+                }
+                
+                // 점수 획득 확인
+                if (!o.isScored && o.x < player.x) {
+                    score++;
+                    o.isScored = true;
+                }
+            });
+
+            // 장애물 생성 (랜덤 확률)
+            frameCount++;
+            gameSpeed += SPEED_INCREASE_RATE; // 속도 증가
+            
+            if (frameCount % OBSTACLE_SPAWN_RATE === 0) {
+                if (Math.random() < 0.7) { // 70% 확률로 생성
+                    obstacles.push(createObstacle());
+                }
+            }
+        }
+
+        function checkCollision() {
+            for (let i = 0; i < obstacles.length; i++) {
+                const o = obstacles[i];
+                const p = player;
+
+                // 충돌 조건 확인 (AABB)
+                if (
+                    p.x < o.x + o.width &&
+                    p.x + p.width > o.x &&
+                    p.y - p.height < o.y + o.height &&
+                    p.y > o.y // 캐릭터의 발이 장애물의 맨 위보다 위에 있을 때 (점프)
+                ) {
+                    // 충돌 발생
+                    endGame();
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // === 게임 루프 및 종료 ===
+
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // 1. 업데이트
+            updatePlayer();
+            updateObstacles();
+            checkCollision();
+            
+            // 2. 그리기
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 배경 지우기
+            drawGround(); // 지면 그리기
+            obstacles.forEach(drawObstacle); // 장애물 그리기
+            drawPlayer(player); // 캐릭터 그리기
+            
+            // 3. HUD 업데이트
+            scoreDisplay.textContent = score;
+
+            // 다음 프레임 요청
+            requestAnimationFrame(gameLoop);
+        }
+
+        function endGame() {
+            isGameRunning = false;
+
+            // 최고 점수 업데이트
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('highScore', highScore);
+                highScoreDisplay.textContent = highScore;
+            }
+            
+            // 게임 오버 모달 표시
+            finalScoreDisplay.textContent = score;
+            gameOverModal.classList.remove('hidden');
+        }
+
+        // 초기화 함수 호출
+        window.onload = initialize;
+    </script>
+</body>
+</html>
